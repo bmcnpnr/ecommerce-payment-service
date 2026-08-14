@@ -5,8 +5,8 @@ spring:
     name: payment-service
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5436/paymentdb}
-    username: ${DB_USERNAME:ecommerce}
-    password: ${DB_PASSWORD:ecommerce}
+    username: ${DB_USERNAME:paymentuser}
+    password: ${DB_PASSWORD:paymentpass}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -49,7 +49,7 @@ management:
     health:
       show-details: always
     prometheus:
-      enabled: true
+      access: unrestricted
   metrics:
     tags:
       application: ${spring.application.name}
@@ -62,9 +62,15 @@ management:
   tracing:
     sampling:
       probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
-  otlp:
+  opentelemetry:
     tracing:
-      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://tempo:4318}/v1/traces
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://tempo:4318}/v1/traces
+  otlp:
+    metrics:
+      export:
+        enabled: false
 
 springdoc:
   swagger-ui:
