@@ -36,15 +36,25 @@ eureka:
   client:
     service-url:
       defaultZone: ${EUREKA_CLIENT_SERVICEURL_DEFAULTZONE:http://localhost:8761/eureka/}
-    fetch-registry: true
-    register-with-eureka: true
+    # Fetch the registry every 5s (default 30s) so a replaced peer is seen
+    # quickly. The LoadBalancer's own instance cache is shortened to match
+    # (spring.cloud.loadbalancer.cache.ttl) where this service calls peers.
+    registry-fetch-interval-seconds: 5
   instance:
     prefer-ip-address: true
+    # Heartbeat every 5s, expire after 15s (defaults 30s / 90s): a *crashed*
+    # instance leaves the registry within ~20s instead of up to two minutes.
+    # Graceful stops do not wait for this: the Kubernetes preStop hook marks
+    # the instance OUT_OF_SERVICE through /actuator/serviceregistry and drains
+    # for 15s, then Boot's graceful shutdown deregisters it — see
+    # ecommerce-platform/k8s/40-services.yaml.
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics,prometheus,circuitbreakers
+        include: health,info,metrics,prometheus,circuitbreakers,serviceregistry
   endpoint:
     health:
       show-details: always
