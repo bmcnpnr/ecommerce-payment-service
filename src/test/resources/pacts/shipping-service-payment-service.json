@@ -1,0 +1,177 @@
+{
+  "consumer": {
+    "name": "shipping-service"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "testname": "com.ecommerce.shipping.contract.PaymentEventsConsumerPactTest.paymentCompleted_createsTheShipmentAndAnnouncesIt(List)"
+      },
+      "contents": {
+        "content": {
+          "amount": 99.98,
+          "completedAt": [
+            2026,
+            8,
+            23,
+            14,
+            30,
+            15,
+            123456789
+          ],
+          "customerId": "customer-42",
+          "orderId": 7,
+          "paymentId": 501,
+          "transactionId": "TXN-1A2B3C4D"
+        },
+        "contentType": "application/json",
+        "encoded": false
+      },
+      "description": "a payment.completed event",
+      "key": "",
+      "matchingRules": {
+        "body": {
+          "$.amount": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "number"
+              }
+            ]
+          },
+          "$.completedAt": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type",
+                "min": 5
+              }
+            ]
+          },
+          "$.completedAt[0]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[1]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[2]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[3]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[4]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[5]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[6]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.customerId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.orderId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.paymentId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.transactionId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "kafka_key": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "\\d+"
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "contentType": "application/json",
+        "kafka_key": "7",
+        "kafka_topic": "payment.completed"
+      },
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment 501 for order 7 has completed"
+        }
+      ],
+      "type": "Asynchronous/Messages"
+    }
+  ],
+  "metadata": {
+    "pact-jvm": {
+      "version": "4.7.5"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "payment-service"
+  }
+}

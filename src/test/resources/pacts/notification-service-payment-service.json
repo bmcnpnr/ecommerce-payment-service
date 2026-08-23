@@ -1,0 +1,477 @@
+{
+  "consumer": {
+    "name": "notification-service"
+  },
+  "interactions": [
+    {
+      "comments": {
+        "testname": "com.ecommerce.notificationservice.contract.PaymentEventsConsumerPactTest.paymentCompleted_isDecodedAndHandedToTheNotificationService(List)"
+      },
+      "contents": {
+        "content": {
+          "amount": 99.98,
+          "completedAt": [
+            2026,
+            8,
+            23,
+            14,
+            30,
+            15,
+            123456789
+          ],
+          "customerId": "customer-42",
+          "orderId": 7,
+          "paymentId": 501,
+          "transactionId": "TXN-1A2B3C4D"
+        },
+        "contentType": "application/json",
+        "encoded": false
+      },
+      "description": "a payment.completed event",
+      "key": "d19989c7",
+      "matchingRules": {
+        "body": {
+          "$.amount": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "number"
+              }
+            ]
+          },
+          "$.completedAt": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type",
+                "min": 5
+              }
+            ]
+          },
+          "$.completedAt[0]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[1]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[2]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[3]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[4]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[5]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.completedAt[6]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.customerId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.orderId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.paymentId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.transactionId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "kafka_key": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "\\d+"
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "contentType": "application/json",
+        "kafka_key": "7",
+        "kafka_topic": "payment.completed"
+      },
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment 501 for order 7 has completed"
+        }
+      ],
+      "type": "Asynchronous/Messages"
+    },
+    {
+      "comments": {
+        "testname": "com.ecommerce.notificationservice.contract.PaymentEventsConsumerPactTest.paymentFailed_isDecodedAndHandedToTheNotificationService(List)"
+      },
+      "contents": {
+        "content": {
+          "customerId": "customer-42",
+          "failedAt": [
+            2026,
+            8,
+            23,
+            14,
+            30,
+            15,
+            123456789
+          ],
+          "failureReason": "Payment declined by gateway",
+          "orderId": 7,
+          "paymentId": 502
+        },
+        "contentType": "application/json",
+        "encoded": false
+      },
+      "description": "a payment.failed event",
+      "key": "45352c70",
+      "matchingRules": {
+        "body": {
+          "$.customerId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.failedAt": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type",
+                "min": 5
+              }
+            ]
+          },
+          "$.failedAt[0]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failedAt[1]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failedAt[2]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failedAt[3]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failedAt[4]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failedAt[5]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failedAt[6]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.failureReason": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.orderId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.paymentId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "kafka_key": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "\\d+"
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "contentType": "application/json",
+        "kafka_key": "7",
+        "kafka_topic": "payment.failed"
+      },
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment 502 for order 7 has failed"
+        }
+      ],
+      "type": "Asynchronous/Messages"
+    },
+    {
+      "comments": {
+        "testname": "com.ecommerce.notificationservice.contract.PaymentEventsConsumerPactTest.paymentRefunded_isDecodedAndHandedToTheNotificationService(List)"
+      },
+      "contents": {
+        "content": {
+          "amount": 99.98,
+          "customerId": "customer-42",
+          "orderId": 7,
+          "paymentId": 503,
+          "refundedAt": [
+            2026,
+            8,
+            23,
+            14,
+            30,
+            15,
+            123456789
+          ]
+        },
+        "contentType": "application/json",
+        "encoded": false
+      },
+      "description": "a payment.refunded event",
+      "key": "92dfc05f",
+      "matchingRules": {
+        "body": {
+          "$.amount": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "number"
+              }
+            ]
+          },
+          "$.customerId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type"
+              }
+            ]
+          },
+          "$.orderId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.paymentId": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "type",
+                "min": 5
+              }
+            ]
+          },
+          "$.refundedAt[0]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt[1]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt[2]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt[3]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt[4]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt[5]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          },
+          "$.refundedAt[6]": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "integer"
+              }
+            ]
+          }
+        },
+        "metadata": {
+          "kafka_key": {
+            "combine": "AND",
+            "matchers": [
+              {
+                "match": "regex",
+                "regex": "\\d+"
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "contentType": "application/json",
+        "kafka_key": "7",
+        "kafka_topic": "payment.refunded"
+      },
+      "pending": false,
+      "providerStates": [
+        {
+          "name": "payment 503 for order 7 has been refunded"
+        }
+      ],
+      "type": "Asynchronous/Messages"
+    }
+  ],
+  "metadata": {
+    "pact-jvm": {
+      "version": "4.7.5"
+    },
+    "pactSpecification": {
+      "version": "4.0"
+    }
+  },
+  "provider": {
+    "name": "payment-service"
+  }
+}
