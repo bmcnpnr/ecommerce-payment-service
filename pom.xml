@@ -19,7 +19,6 @@
         <lombok.version.provided>1.18.42</lombok.version.provided>
         <spring-cloud.version>2025.1.1</spring-cloud.version>
         <springdoc.version>2.8.5</springdoc.version>
-        <modelmapper.version>3.2.0</modelmapper.version>
         <pact.version>4.7.5</pact.version>
     </properties>
     <dependencyManagement>
@@ -47,7 +46,6 @@
         </dependency>
         <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-database-postgresql</artifactId></dependency>
         <dependency><groupId>org.springdoc</groupId><artifactId>springdoc-openapi-starter-webmvc-ui</artifactId><version>${springdoc.version}</version></dependency>
-        <dependency><groupId>org.modelmapper</groupId><artifactId>modelmapper</artifactId><version>${modelmapper.version}</version></dependency>
         <!-- 250025002500 Observability 25002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500250025002500 -->
         <dependency>
             <groupId>io.micrometer</groupId>

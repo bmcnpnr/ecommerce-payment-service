@@ -1,11 +1,49 @@
 # ecommerce-payment-service
-I will develop an e commerce website backend (project is suggested by ChatGPT) to develop my azure, microservices and kubernetes experience
-docker build -t payment-service:0.0.1-SNAPSHOT -f docker/Dockerfile .
-docker tag payment-service:0.0.1-SNAPSHOT bmcnpnr/ecommerce-payment-service:latest
-docker push bmcnpnr/ecommerce-payment-service:latest
+
+Payments against a **simulated** payment gateway. The client creates a payment
+(`POST /api/v1/payments` with order, customer, amount and method), then
+processes it. A random draw approves 80 % of payments. Each outcome is published
+to Kafka (`payment.completed`, `payment.failed`), which is how order-, shipping-
+and notification-service learn about it. Completed payments can be refunded in
+full (`payment.refunded`).
+
+| | |
+|---|---|
+| Port | 8085 |
+| Gateway routes | `/api/v1/payments/**` (JWT required) |
+| Data store | PostgreSQL `paymentdb` (`payments`, Flyway) |
+| Publishes | `payment.completed`, `payment.failed`, `payment.refunded` (key: order ID) |
+| Consumes / calls | nothing |
+| Docs | [Deep dive](https://github.com/bmcnpnr/ecommerce-platform/blob/develop/docs/services/payment-service.md) · [API reference](https://github.com/bmcnpnr/ecommerce-platform/blob/develop/docs/api/payment-service.md) · [Event catalog](https://github.com/bmcnpnr/ecommerce-platform/blob/develop/docs/events.md) · Swagger UI at http://localhost:8080/swagger-ui.html (`payment-service`) |
+
+With the repositories checked out side by side, the same docs are in
+`../ecommerce-platform/docs/`.
+
+> **Known gaps** (see the deep dive): the amount is whatever the client sends,
+> and the order is never checked; any authenticated user can process or refund
+> any payment; a decline still answers HTTP 200.
+
+## Build and run
+
+```bash
+mvn -B verify                       # unit and contract tests (H2)
+mvn -B clean package -DskipTests    # the jar the Docker image copies
+cd ../ecommerce-platform && docker compose up -d --build payment-service
+```
+
+Kafka is configured in `config/KafkaProducerConfig.java`. Events are JSON from
+spring-kafka's `JacksonJsonSerializer`, with `LocalDateTime` kept as integer
+arrays (`WRITE_DATES_AS_TIMESTAMPS`) as the consumers and pacts expect.
 
 ## Contract tests (Pact)
 
-- `src/test/java/.../contract/PaymentEventsProviderPactTest` — **provider** of `payment.completed` / `payment.failed` / `payment.refunded` for order-service, shipping-service and notification-service. Replays the pacts in `src/test/resources/pacts/` against the real `PaymentService` + `PaymentEventProducer`, serializing with the configured Kafka `JsonSerializer` (the random 80/20 gateway outcome is simply re-run until the wanted branch fires).
+`src/test/java/.../contract/PaymentEventsProviderPactTest` is the **provider** of
+`payment.completed` / `payment.failed` / `payment.refunded` for order-service,
+shipping-service and notification-service. It replays the pacts in
+`src/test/resources/pacts/` against the real `PaymentService` and
+`PaymentEventProducer`, serializing with the production `JacksonJsonSerializer`
+instance from the `ProducerFactory`. The random 80/20 outcome is simply re-run
+until the wanted branch fires.
 
-Run them alone with `mvn test -Dtest='*PactTest'`; they are ordinary Surefire tests, so `mvn verify` and CI run them too. Regenerate and redistribute pacts across repositories with `ecommerce-platform/sync-pacts.sh` (see its README, "Contract tests").
+Run it alone with `mvn test -Dtest='*PactTest'`. Redistribute pacts with
+`ecommerce-platform/sync-pacts.sh`.
