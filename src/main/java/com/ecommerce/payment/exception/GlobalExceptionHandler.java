@@ -32,6 +32,21 @@ public class GlobalExceptionHandler {
         return resp(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req.getRequestURI());
     }
 
+    @ExceptionHandler(InvalidPaymentMethodException.class)
+    public ResponseEntity<ErrorResponse> invalidMethod(InvalidPaymentMethodException ex, HttpServletRequest req) {
+        return resp(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req.getRequestURI());
+    }
+
+    @ExceptionHandler(org.springframework.web.HttpMediaTypeNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> unsupportedMediaType(org.springframework.web.HttpMediaTypeNotSupportedException ex, HttpServletRequest req) {
+        return resp(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Unsupported Media Type", ex.getMessage(), req.getRequestURI());
+    }
+
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> noResource(org.springframework.web.servlet.resource.NoResourceFoundException ex, HttpServletRequest req) {
+        return resp(HttpStatus.NOT_FOUND, "Not Found", "No resource found for " + req.getRequestURI(), req.getRequestURI());
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> validation(MethodArgumentNotValidException ex, HttpServletRequest req) {
         List<ErrorResponse.FieldError> errors = ex.getBindingResult().getFieldErrors().stream()

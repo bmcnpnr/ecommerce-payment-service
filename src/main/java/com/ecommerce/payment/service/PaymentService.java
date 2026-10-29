@@ -28,21 +28,32 @@ public class PaymentService {
 
     @Transactional
     public PaymentDTO initiatePayment(InitiatePaymentRequest request) {
-        paymentRepository.findByOrderId(request.getOrderId()).ifPresent(existing -> {
-            if (existing.getStatus() == PaymentStatus.COMPLETED) {
-                throw new PaymentAlreadyProcessedException("Payment already completed for order: " + request.getOrderId());
-            }
-        });
+        PaymentMethod method;
+        try {
+            method = PaymentMethod.valueOf(request.getMethod());
+        } catch (IllegalArgumentException e) {
+            throw new InvalidPaymentMethodException("Unsupported payment method: " + request.getMethod());
+        }
 
-        Payment payment = Payment.builder()
-                .orderId(request.getOrderId())
-                .customerId(request.getCustomerId())
-                .amount(request.getAmount())
-                .currency(request.getCurrency() != null ? request.getCurrency() : "USD")
-                .method(PaymentMethod.valueOf(request.getMethod()))
-                .cardLastFour(request.getCardLastFour())
-                .status(PaymentStatus.PENDING)
-                .build();
+        // payments.order_id is unique: a new attempt for an unpaid order reuses the existing row.
+        Payment payment = paymentRepository.findByOrderId(request.getOrderId()).orElse(null);
+        if (payment != null && payment.getStatus() == PaymentStatus.COMPLETED) {
+            throw new PaymentAlreadyProcessedException("Payment already completed for order: " + request.getOrderId());
+        }
+        if (payment == null) {
+            payment = new Payment();
+            payment.setOrderId(request.getOrderId());
+        } else {
+            payment.setTransactionId(null);
+            payment.setFailureReason(null);
+            payment.setUpdatedAt(LocalDateTime.now());
+        }
+        payment.setCustomerId(request.getCustomerId());
+        payment.setAmount(request.getAmount());
+        payment.setCurrency(request.getCurrency() != null ? request.getCurrency() : "USD");
+        payment.setMethod(method);
+        payment.setCardLastFour(request.getCardLastFour());
+        payment.setStatus(PaymentStatus.PENDING);
 
         return toDTO(paymentRepository.save(payment));
     }

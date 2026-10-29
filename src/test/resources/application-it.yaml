@@ -1,0 +1,26 @@
+# Profile for the *IT classes (src/test/java/com/ecommerce/payment/integration). Layered on the
+# production application.yaml: the datasource comes from the Postgres Testcontainer via
+# @ServiceConnection and spring.kafka.bootstrap-servers from the Kafka container, so this only
+# pins the prod schema handling and switches off what needs the rest of the platform.
+spring:
+  jpa:
+    hibernate:
+      # Same as prod, stated explicitly: the entity must match what the real Flyway migrations
+      # build, which the H2 `test` profile (create-drop, Flyway off) never checks.
+      ddl-auto: validate
+  flyway:
+    enabled: true
+  cloud:
+    discovery:
+      enabled: false
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+management:
+  tracing:
+    sampling:
+      probability: 0.0
+    export:
+      enabled: false

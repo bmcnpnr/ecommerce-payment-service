@@ -64,6 +64,15 @@
              pacts order-service, shipping-service and notification-service hold against the payment.* events this
              service publishes (src/test/resources/pacts, synced by ecommerce-platform/sync-pacts.sh). -->
         <dependency><groupId>au.com.dius.pact.provider</groupId><artifactId>junit5</artifactId><version>${pact.version}</version><scope>test</scope></dependency>
+        <!-- Integration tests (*IT, run by failsafe in `mvn verify`, see src/test/java/com/ecommerce/payment/integration):
+             real Postgres (Flyway migrations + ddl-auto=validate) and Kafka in Testcontainers, same images as prod.
+             Versions come from the Boot-managed testcontainers-bom; the 2.x artifact ids carry the testcontainers- prefix. -->
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-testcontainers</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.testcontainers</groupId><artifactId>testcontainers-junit-jupiter</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.testcontainers</groupId><artifactId>testcontainers-postgresql</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.testcontainers</groupId><artifactId>testcontainers-kafka</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-data-jpa-test</artifactId><scope>test</scope></dependency>
+        <dependency><groupId>org.awaitility</groupId><artifactId>awaitility</artifactId><scope>test</scope></dependency>
     </dependencies>
     <build>
         <finalName>payment-service-${project.version}</finalName>
@@ -85,6 +94,24 @@
                         <pact_do_not_track>true</pact_do_not_track>
                     </systemPropertyVariables>
                 </configuration>
+            </plugin>
+            <plugin>
+                <!-- Runs the *IT classes (Testcontainers, needs a Docker daemon) in integration-test/verify. -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <pact_do_not_track>true</pact_do_not_track>
+                    </systemPropertyVariables>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
