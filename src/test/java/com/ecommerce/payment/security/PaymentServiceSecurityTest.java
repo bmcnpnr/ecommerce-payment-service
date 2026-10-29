@@ -12,7 +12,6 @@ import com.ecommerce.payment.model.PaymentStatus;
 import com.ecommerce.payment.repository.PaymentRepository;
 import com.ecommerce.payment.service.PaymentService;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -125,7 +124,6 @@ class PaymentServiceSecurityTest {
         verify(paymentRepository, never()).save(any());
     }
 
-    @Disabled("BUG S-76: initiate reuses any non-COMPLETED row, so a REFUNDED payment is reset to PENDING and can be processed (and paid out as completed) again")
     @Test
     void initiate_forARefundedPayment_isRejected_andStaysRefunded() {
         Payment payment = payment(PaymentStatus.REFUNDED);
@@ -136,7 +134,6 @@ class PaymentServiceSecurityTest {
         assertThat(payment.getStatus()).isEqualTo(PaymentStatus.REFUNDED);
     }
 
-    @Disabled("BUG S-75: re-initiating an unpaid order overwrites customerId, amount and card of the existing row, whoever calls, so bob can take over alice's pending payment and set the amount to 0.01")
     @ParameterizedTest
     @EnumSource(value = PaymentStatus.class, names = {"PENDING", "FAILED"})
     void initiate_byADifferentCustomer_cannotTakeOverAnExistingPayment(PaymentStatus status) {

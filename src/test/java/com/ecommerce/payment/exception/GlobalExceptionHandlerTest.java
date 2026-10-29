@@ -30,6 +30,10 @@ class GlobalExceptionHandlerTest {
 
     @Autowired MockMvc mockMvc;
     @MockitoBean PaymentService paymentService;
+    // Authorization is covered by PaymentAccessTest and PaymentSecurityIT, the order check by OrderVerifierTest
+    // and PaymentSecurityIT; here the controller wiring is under test, so both guards are inert mocks.
+    @MockitoBean private com.ecommerce.payment.security.PaymentAccess access;
+    @MockitoBean private com.ecommerce.payment.service.OrderVerifier orderVerifier;
 
     @Test
     void paymentNotFound_returns404WithErrorBodyAndCorrelationId() throws Exception {

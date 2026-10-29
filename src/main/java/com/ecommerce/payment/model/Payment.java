@@ -49,6 +49,14 @@ public class Payment {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * Optimistic lock (V3 migration). The state-changing paths flush right after claiming a payment,
+     * so of two concurrent calls on one row exactly one wins and the other fails before it can publish.
+     */
+    @Version
+    @Column(name = "version", nullable = false, columnDefinition = "BIGINT NOT NULL DEFAULT 0")
+    private Long version;
+
     @PreUpdate
     public void preUpdate() { this.updatedAt = LocalDateTime.now(); }
 }

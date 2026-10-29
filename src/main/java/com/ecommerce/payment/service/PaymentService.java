@@ -9,6 +9,8 @@ import com.ecommerce.payment.repository.PaymentRepository;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,18 +37,28 @@ public class PaymentService {
             throw new InvalidPaymentMethodException("Unsupported payment method: " + request.getMethod());
         }
 
-        // payments.order_id is unique: a new attempt for an unpaid order reuses the existing row.
+        // payments.order_id is unique: a new attempt for an unpaid order reuses the existing row, but only
+        // for the customer who owns it and only while it is still PENDING or FAILED.
         Payment payment = paymentRepository.findByOrderId(request.getOrderId()).orElse(null);
-        if (payment != null && payment.getStatus() == PaymentStatus.COMPLETED) {
-            throw new PaymentAlreadyProcessedException("Payment already completed for order: " + request.getOrderId());
-        }
-        if (payment == null) {
-            payment = new Payment();
-            payment.setOrderId(request.getOrderId());
-        } else {
+        if (payment != null) {
+            if (payment.getStatus() == PaymentStatus.COMPLETED) {
+                throw new PaymentAlreadyProcessedException("Payment already completed for order: " + request.getOrderId());
+            }
+            if (!payment.getCustomerId().equals(request.getCustomerId())) {
+                // Never let a second caller rewrite someone else's payment (S-75).
+                throw new PaymentAlreadyProcessedException("A payment already exists for order: " + request.getOrderId());
+            }
+            if (payment.getStatus() != PaymentStatus.PENDING && payment.getStatus() != PaymentStatus.FAILED) {
+                // REFUNDED must stay refunded (S-76); PROCESSING is mid-flight.
+                throw new PaymentAlreadyProcessedException("Payment for order " + request.getOrderId()
+                        + " is in status " + payment.getStatus() + " and cannot be initiated again");
+            }
             payment.setTransactionId(null);
             payment.setFailureReason(null);
             payment.setUpdatedAt(LocalDateTime.now());
+        } else {
+            payment = new Payment();
+            payment.setOrderId(request.getOrderId());
         }
         payment.setCustomerId(request.getCustomerId());
         payment.setAmount(request.getAmount());
@@ -55,7 +67,14 @@ public class PaymentService {
         payment.setCardLastFour(request.getCardLastFour());
         payment.setStatus(PaymentStatus.PENDING);
 
-        return toDTO(paymentRepository.save(payment));
+        try {
+            Payment saved = paymentRepository.save(payment);
+            paymentRepository.flush();
+            return toDTO(saved);
+        } catch (DataIntegrityViolationException | ObjectOptimisticLockingFailureException e) {
+            // The other side of a concurrent first initiate (unique order_id) or re-initiate (version) won.
+            throw new PaymentAlreadyProcessedException("A payment is already being created for order: " + request.getOrderId());
+        }
     }
 
     @Transactional
@@ -69,6 +88,7 @@ public class PaymentService {
 
         payment.setStatus(PaymentStatus.PROCESSING);
         paymentRepository.save(payment);
+        claim();
 
         // Simulate payment gateway: 80% success rate
         boolean success = ThreadLocalRandom.current().nextInt(10) < 8;
@@ -130,6 +150,7 @@ public class PaymentService {
         payment.setStatus(PaymentStatus.REFUNDED);
         payment.setUpdatedAt(LocalDateTime.now());
         paymentRepository.save(payment);
+        claim();
 
         eventProducer.publishRefunded(PaymentRefundedEvent.builder()
                 .paymentId(payment.getId()).orderId(payment.getOrderId())
@@ -137,6 +158,19 @@ public class PaymentService {
                 .refundedAt(LocalDateTime.now()).build());
 
         return toDTO(payment);
+    }
+
+    /**
+     * Flushes the status change now. The row carries a version, so when two requests race on one
+     * payment the loser's UPDATE finds a newer version, fails here, and is answered 409 - before
+     * it can run the gateway or publish an event (S-77).
+     */
+    private void claim() {
+        try {
+            paymentRepository.flush();
+        } catch (ObjectOptimisticLockingFailureException e) {
+            throw new PaymentAlreadyProcessedException("Payment is being processed by another request");
+        }
     }
 
     private PaymentDTO toDTO(Payment p) {

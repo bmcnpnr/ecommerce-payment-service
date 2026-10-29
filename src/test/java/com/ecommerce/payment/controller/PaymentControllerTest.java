@@ -34,6 +34,10 @@ class PaymentControllerTest {
 
     @MockitoBean
     private PaymentService paymentService;
+    // Authorization is covered by PaymentAccessTest and PaymentSecurityIT, the order check by OrderVerifierTest
+    // and PaymentSecurityIT; here the controller wiring is under test, so both guards are inert mocks.
+    @MockitoBean private com.ecommerce.payment.security.PaymentAccess access;
+    @MockitoBean private com.ecommerce.payment.service.OrderVerifier orderVerifier;
 
     @Test
     void initiatePayment_returns201() throws Exception {
@@ -80,7 +84,7 @@ class PaymentControllerTest {
         when(paymentService.initiatePayment(any())).thenReturn(PaymentDTO.builder().id(7L).status("PENDING").build());
 
         mockMvc.perform(post("/api/v1/payments").contentType(MediaType.APPLICATION_JSON).content("""
-                        {"orderId":5,"customerId":"cust-5","amount":12.3456,"currency":"EUR",
+                        {"orderId":5,"customerId":"cust-5","amount":12.34,"currency":"EUR",
                          "method":"DIGITAL_WALLET","cardLastFour":"9876"}"""))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(7));
@@ -89,7 +93,7 @@ class PaymentControllerTest {
         verify(paymentService).initiatePayment(req.capture());
         assertThat(req.getValue().getOrderId()).isEqualTo(5L);
         assertThat(req.getValue().getCustomerId()).isEqualTo("cust-5");
-        assertThat(req.getValue().getAmount()).isEqualByComparingTo("12.3456");
+        assertThat(req.getValue().getAmount()).isEqualByComparingTo("12.34");
         assertThat(req.getValue().getCurrency()).isEqualTo("EUR");
         assertThat(req.getValue().getMethod()).isEqualTo("DIGITAL_WALLET");
         assertThat(req.getValue().getCardLastFour()).isEqualTo("9876");

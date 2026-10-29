@@ -3,6 +3,22 @@ server:
 spring:
   application:
     name: payment-service
+  cloud:
+    loadbalancer:
+      cache:
+        ttl: 5s
+      # Without eager-load the first call to order-service finds an empty instance list.
+      eager-load:
+        clients: order-service
+    openfeign:
+      client:
+        config:
+          default:
+            # order-service is asked before every payment is accepted: fail fast on a vanished
+            # instance (connect) and do not hold a request thread for long (read). A failure here
+            # becomes 503; the payment is never accepted without the answer.
+            connect-timeout: 2000
+            read-timeout: 5000
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5436/paymentdb}
     username: ${DB_USERNAME:paymentuser}
@@ -47,7 +63,7 @@ management:
         include: health,info,metrics,prometheus,circuitbreakers,serviceregistry
   endpoint:
     health:
-      show-details: always
+      show-details: never
     prometheus:
       access: unrestricted
   metrics:

@@ -10,9 +10,8 @@ spring:
       ddl-auto: validate
   flyway:
     enabled: true
-  cloud:
-    discovery:
-      enabled: false
+  # Discovery stays on: order-service is a JDK HttpServer registered with the simple discovery client
+  # (see AbstractIntegrationTest), so the real Feign client and load balancer are exercised.
 eureka:
   client:
     enabled: false

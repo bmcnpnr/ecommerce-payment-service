@@ -1,6 +1,12 @@
 package com.ecommerce.payment.contract;
 
 import au.com.dius.pact.provider.junit5.HttpTestTarget;
+import com.sun.net.httpserver.HttpServer;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import au.com.dius.pact.provider.junit5.PactVerificationContext;
 import au.com.dius.pact.provider.junit5.PactVerificationInvocationContextProvider;
 import au.com.dius.pact.provider.junitsupport.Provider;
@@ -47,6 +53,36 @@ import java.util.Base64;
 @PactFolder("pacts-frontend")
 class FrontendHttpProviderPactTest {
 
+    /**
+     * Stand-in for order-service: initiating a payment asks it for the order (status, owner, total).
+     * Registered through the simple discovery client, so the real Feign client and load balancer run.
+     */
+    private static volatile String orderJson = "{}";
+    private static final HttpServer ORDER_SERVICE;
+
+    static {
+        try {
+            ORDER_SERVICE = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+        ORDER_SERVICE.createContext("/internal/v1/orders/", exchange -> {
+            byte[] bytes = orderJson.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        ORDER_SERVICE.start();
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> ORDER_SERVICE.stop(0)));
+    }
+
+    @DynamicPropertySource
+    static void orderServiceProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.cloud.discovery.client.simple.instances.order-service[0].uri",
+                () -> "http://127.0.0.1:" + ORDER_SERVICE.getAddress().getPort());
+    }
+
     @LocalServerPort
     private int port;
 
@@ -87,9 +123,11 @@ class FrontendHttpProviderPactTest {
 
     // ───────────────────────── provider states ─────────────────────────
 
+    /** Order 7 belongs to alice, is CONFIRMED and costs 99.98 (what order-service would report). */
     @State("order 7 has no payment")
     void order7HasNoPayment() {
         jdbc.update("DELETE FROM payments");
+        orderJson = "{\"orderId\":7,\"customerId\":\"alice\",\"totalAmount\":99.98,\"status\":\"CONFIRMED\",\"orderItems\":[]}";
     }
 
     /** PENDING payment 501 for order 7 (alice, 99.98 USD, credit card 4242). */

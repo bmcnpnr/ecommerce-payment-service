@@ -52,7 +52,7 @@ class PaymentRepositoryIT extends AbstractIntegrationTest {
         Object version = em.createNativeQuery(
                 "select version from flyway_schema_history where success order by installed_rank desc limit 1")
                 .getSingleResult();
-        assertThat(version).hasToString("2");
+        assertThat(version).hasToString("3"); // V3 adds payments.version
         Object db = em.createNativeQuery("select version()").getSingleResult();
         assertThat(db.toString()).startsWith("PostgreSQL 16");
     }

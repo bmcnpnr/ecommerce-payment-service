@@ -88,7 +88,10 @@ class PaymentFlowIT extends AbstractIntegrationTest {
 
     @BeforeEach
     void client() {
+        // The gateway forwards the caller's identity; this flow runs as an administrator, who may pay for
+        // any customer's order and may refund.
         http = RestClient.builder().baseUrl("http://localhost:" + port + "/api/v1/payments")
+                .defaultHeader("X-Username", "root").defaultHeader("X-User-Id", "1").defaultHeader("X-User-Role", "ADMIN")
                 .defaultStatusHandler(status -> true, (req, res) -> { })
                 .build();
     }
@@ -114,6 +117,7 @@ class PaymentFlowIT extends AbstractIntegrationTest {
     }
 
     private JsonNode initiate(long orderId, String customerId, String amount) {
+        registerOrder(orderId, customerId, amount, "CONFIRMED");
         ResponseEntity<String> r = post("", """
                 {"orderId":%d,"customerId":"%s","amount":%s,"method":"CREDIT_CARD","cardLastFour":"4242"}"""
                 .formatted(orderId, customerId, amount));
@@ -187,7 +191,8 @@ class PaymentFlowIT extends AbstractIntegrationTest {
         assertThat(json(get("/" + id)).get("status").asString()).isEqualTo("COMPLETED");
         assertThat(json(get("/order/" + orderId)).get("id").asLong()).isEqualTo(id);
 
-        // a completed order cannot be paid again
+        // a completed order cannot be paid again (order-service now reports it PAID)
+        registerOrder(orderId, customer, "49.99", "PAID");
         ResponseEntity<String> again = post("", """
                 {"orderId":%d,"customerId":"%s","amount":1,"method":"CREDIT_CARD"}""".formatted(orderId, customer));
         assertThat(again.getStatusCode().value()).isEqualTo(409);
@@ -285,7 +290,7 @@ class PaymentFlowIT extends AbstractIntegrationTest {
     @Test
     void initiateTwiceForSameOrder_keepsOrderLookupWorking() {
         long orderId = newOrderId();
-        initiate(orderId, "cust-dup", "5");
+        initiate(orderId, "cust-dup", "5"); // also registers the order as CONFIRMED with total 5
         ResponseEntity<String> second = post("", """
                 {"orderId":%d,"customerId":"cust-dup","amount":5,"method":"CREDIT_CARD"}""".formatted(orderId));
         assertThat(second.getStatusCode().value()).isIn(200, 201, 409);

@@ -131,8 +131,8 @@ class PaymentServiceTest {
 
     @Test
     void initiatePayment_existingPendingOrFailedPayment_allowsNewAttempt() {
-        for (PaymentStatus existing : new PaymentStatus[]{PaymentStatus.PENDING, PaymentStatus.FAILED,
-                PaymentStatus.PROCESSING, PaymentStatus.REFUNDED}) {
+        // PROCESSING (mid-flight) and REFUNDED (S-76) are not retryable: see initiatePayment_processingOrRefunded_isRejected
+        for (PaymentStatus existing : new PaymentStatus[]{PaymentStatus.PENDING, PaymentStatus.FAILED}) {
             reset(paymentRepository);
             testPayment.setStatus(existing);
             when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(testPayment));
@@ -144,6 +144,43 @@ class PaymentServiceTest {
             assertThat(result.getStatus()).as("existing %s", existing).isEqualTo("PENDING");
             verify(paymentRepository).save(any());
         }
+    }
+
+    @Test
+    void initiatePayment_processingOrRefunded_isRejected() {
+        for (PaymentStatus existing : new PaymentStatus[]{PaymentStatus.PROCESSING, PaymentStatus.REFUNDED}) {
+            reset(paymentRepository);
+            testPayment.setStatus(existing);
+            when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(testPayment));
+
+            assertThatThrownBy(() -> paymentService.initiatePayment(InitiatePaymentRequest.builder()
+                    .orderId(10L).customerId("user1").amount(BigDecimal.ONE).method("BANK_TRANSFER").build()))
+                    .as("existing %s", existing).isInstanceOf(PaymentAlreadyProcessedException.class);
+            assertThat(testPayment.getStatus()).isEqualTo(existing);
+            verify(paymentRepository, never()).save(any());
+        }
+    }
+
+    @Test
+    void initiatePayment_uniqueOrderRace_isA409NotA500() {
+        when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.empty());
+        when(paymentRepository.save(any())).thenThrow(new org.springframework.dao.DataIntegrityViolationException("uq_payments_order_id"));
+
+        assertThatThrownBy(() -> paymentService.initiatePayment(InitiatePaymentRequest.builder()
+                .orderId(10L).customerId("user1").amount(BigDecimal.ONE).method("CREDIT_CARD").build()))
+                .isInstanceOf(PaymentAlreadyProcessedException.class);
+    }
+
+    @Test
+    void processPayment_lostTheVersionRace_isRejectedBeforeAnyEvent() {
+        when(paymentRepository.findById(1L)).thenReturn(Optional.of(testPayment));
+        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        org.mockito.Mockito.doThrow(new org.springframework.orm.ObjectOptimisticLockingFailureException(Payment.class, 1L))
+                .when(paymentRepository).flush();
+
+        assertThatThrownBy(() -> paymentService.processPayment(1L)).isInstanceOf(PaymentAlreadyProcessedException.class);
+
+        verifyNoInteractions(eventProducer);
     }
 
     @Test

@@ -4,7 +4,6 @@ import com.ecommerce.payment.controller.PaymentController;
 import com.ecommerce.payment.dto.InitiatePaymentRequest;
 import com.ecommerce.payment.dto.PaymentDTO;
 import com.ecommerce.payment.service.PaymentService;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -41,6 +40,10 @@ class PaymentControllerSecurityTest {
 
     @Autowired private MockMvc mockMvc;
     @MockitoBean private PaymentService paymentService;
+    // Authorization is covered by PaymentAccessTest and PaymentSecurityIT, the order check by OrderVerifierTest
+    // and PaymentSecurityIT; here the controller wiring is under test, so both guards are inert mocks.
+    @MockitoBean private com.ecommerce.payment.security.PaymentAccess access;
+    @MockitoBean private com.ecommerce.payment.service.OrderVerifier orderVerifier;
 
     private static String body(String amount, String currency, String card) {
         return """
@@ -63,7 +66,6 @@ class PaymentControllerSecurityTest {
         verifyNoInteractions(paymentService);
     }
 
-    @Disabled("BUG S-71: amount has @DecimalMin(0.01) but no @Digits, so sub-cent precision (0.011, 1.005) is accepted and stored with 4 decimals")
     @ParameterizedTest
     @ValueSource(strings = {"0.011", "1.005", "19.999", "10.12345"})
     void initiate_amountWithMoreThanTwoDecimals_is400(String amount) throws Exception {
@@ -73,7 +75,6 @@ class PaymentControllerSecurityTest {
         verifyNoInteractions(paymentService);
     }
 
-    @Disabled("BUG S-70: amount has no upper bound or integer-digit limit, so values beyond NUMERIC(19,4) pass validation and fail in the database")
     @ParameterizedTest
     @ValueSource(strings = {"99999999999999999999.99", "1000000000000000.00", "123456789012345678901234567890", "1e400"})
     void initiate_amountBeyondTheColumn_is400(String amount) throws Exception {
@@ -85,7 +86,6 @@ class PaymentControllerSecurityTest {
 
     // ---- currency ---------------------------------------------------------------------------------------
 
-    @Disabled("BUG S-72: currency only has @Size(max=3), so '<b>', '12$', 'AB' and '' are accepted and stored")
     @ParameterizedTest
     @ValueSource(strings = {"<b>", "12$", "AB", "", "' O"})
     void initiate_currencyThatIsNotAThreeLetterCode_is400(String currency) throws Exception {
@@ -125,7 +125,6 @@ class PaymentControllerSecurityTest {
         verifyNoInteractions(paymentService);
     }
 
-    @Disabled("BUG S-73: cardLastFour only has @Size(max=4): '<b>', '12', 'abcd' and '' are accepted although the field must be exactly four digits")
     @ParameterizedTest
     @ValueSource(strings = {"<b>", "12", "abcd", "", "12 3", "١٢٣٤"})
     void initiate_cardLastFourThatIsNotFourDigits_is400(String card) throws Exception {
@@ -167,7 +166,6 @@ class PaymentControllerSecurityTest {
         verifyNoInteractions(paymentService);
     }
 
-    @Disabled("BUG S-74: orderId and customerId are not range/length checked: orderId 0 or -1 and a 300-char customerId pass validation (the latter is a 500 at the database)")
     @Test
     void initiate_nonPositiveOrderIdOrOverlongCustomerId_is400() throws Exception {
         for (String json : new String[]{
@@ -245,7 +243,6 @@ class PaymentControllerSecurityTest {
         assertNoInternals(json);
     }
 
-    @Disabled("BUG S-78: HttpMessageNotReadableException / MethodArgumentTypeMismatchException messages are echoed verbatim, exposing DTO class names and Java types")
     @Test
     void malformedJson_errorBodyLeaksNoClassNames() throws Exception {
         MvcResult result = initiate(body("\"abc\"", "\"USD\"", "\"4242\""));
@@ -254,7 +251,6 @@ class PaymentControllerSecurityTest {
         assertNoInternals(result.getResponse().getContentAsString());
     }
 
-    @Disabled("BUG S-78: HttpMessageNotReadableException / MethodArgumentTypeMismatchException messages are echoed verbatim, exposing DTO class names and Java types")
     @Test
     void wrongTypedPathVariable_errorBodyLeaksNoClassNames() throws Exception {
         MvcResult result = mockMvc.perform(get("/api/v1/payments/abc")).andExpect(status().isBadRequest()).andReturn();
