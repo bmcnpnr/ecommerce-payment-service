@@ -147,6 +147,14 @@ class PaymentFlowIT extends AbstractIntegrationTest {
         return find(topic, key).orElseThrow();
     }
 
+    /** Reads whatever arrives within {@code window}, to prove that something does NOT get published. */
+    private static void drain(Duration window) {
+        long end = System.nanoTime() + window.toNanos();
+        while (System.nanoTime() < end) {
+            consumer.poll(Duration.ofMillis(200)).forEach(received::add);
+        }
+    }
+
     private static Optional<ConsumerRecord<String, String>> find(String topic, String key) {
         return received.stream().filter(r -> r.topic().equals(topic) && key.equals(r.key())).findFirst();
     }
@@ -166,7 +174,7 @@ class PaymentFlowIT extends AbstractIntegrationTest {
         long id = completed.get("id").asLong();
         long orderId = completed.get("orderId").asLong();
         String txn = completed.get("transactionId").asString();
-        assertThat(txn).matches("TXN-[0-9A-F]{8}");
+        assertThat(txn).matches("TXN-[0-9A-F]{16}");
 
         Payment row = repository.findById(id).orElseThrow();
         assertThat(row.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
@@ -287,17 +295,63 @@ class PaymentFlowIT extends AbstractIntegrationTest {
         assertThat(r.getStatusCode().value()).isEqualTo(400);
     }
 
+    /**
+     * A second initiate while the first is still PENDING (its /process never happened or timed out) reuses the row:
+     * one row per order, and the lookups by id and by order keep working.
+     */
     @Test
-    void initiateTwiceForSameOrder_keepsOrderLookupWorking() {
+    void initiateTwiceForSameOrder_reusesThePendingRow_andKeepsOrderLookupWorking() {
         long orderId = newOrderId();
-        initiate(orderId, "cust-dup", "5"); // also registers the order as CONFIRMED with total 5
+        JsonNode first = initiate(orderId, "cust-dup", "5"); // also registers the order as CONFIRMED with total 5
         ResponseEntity<String> second = post("", """
                 {"orderId":%d,"customerId":"cust-dup","amount":5,"method":"CREDIT_CARD"}""".formatted(orderId));
-        assertThat(second.getStatusCode().value()).isIn(200, 201, 409);
+        assertThat(second.getStatusCode().value()).as(second.getBody()).isEqualTo(201);
+        assertThat(json(second).get("id").asLong()).as("the same row").isEqualTo(first.get("id").asLong());
+        assertThat(json(second).get("status").asString()).isEqualTo("PENDING");
 
         assertThat(get("/order/" + orderId).getStatusCode().value()).isEqualTo(200);
+        assertThat(get("/" + first.get("id").asLong()).getStatusCode().value()).isEqualTo(200);
         ResponseEntity<String> third = post("", """
                 {"orderId":%d,"customerId":"cust-dup","amount":5,"method":"CREDIT_CARD"}""".formatted(orderId));
-        assertThat(third.getStatusCode().is5xxServerError()).as(third.getBody()).isFalse();
+        assertThat(third.getStatusCode().value()).as(third.getBody()).isEqualTo(201);
+        assertThat(repository.findByOrderId(orderId)).as("one row per order").isPresent();
+    }
+
+    /**
+     * A declined payment ends the order: order-service cancels it, and returns its stock, when it consumes
+     * payment.failed - a second away at best, unbounded while Kafka is slow or down. A retry in that window passes
+     * the order check (the order still reads CONFIRMED) and must be refused, not charged: otherwise payment.completed
+     * would later land on a cancelled order, with the money taken and the stock possibly sold.
+     */
+    @Test
+    void retryAfterADecline_isRefused_409_chargesNothing_andPublishesNothing() {
+        String customer = "cust-" + UUID.randomUUID();
+        JsonNode failed = processUntil("FAILED", customer);
+        long id = failed.get("id").asLong();
+        long orderId = failed.get("orderId").asLong();
+        awaitRecord("payment.failed", orderId);                  // the decline's one event is out
+        registerOrder(orderId, customer, "49.99", "CONFIRMED");  // and order-service has not consumed it yet
+
+        ResponseEntity<String> retry = post("", """
+                {"orderId":%d,"customerId":"%s","amount":49.99,"method":"CREDIT_CARD","cardLastFour":"4242"}"""
+                .formatted(orderId, customer));
+
+        assertThat(retry.getStatusCode().value()).as(retry.getBody()).isEqualTo(409);
+        assertThat(json(retry).get("message").asString())
+                .isEqualTo("The payment for this order was declined and the order is cancelled. Place a new order to try again.");
+        // nothing was charged: the same row, still FAILED, no transaction id, and /process does not reach the gateway
+        Payment row = repository.findByOrderId(orderId).orElseThrow();
+        assertThat(row.getId()).isEqualTo(id);
+        assertThat(row.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(row.getFailureReason()).isEqualTo("Payment declined by gateway");
+        assertThat(row.getTransactionId()).isNull();
+        assertThat(post("/" + id + "/process", null).getStatusCode().value()).isEqualTo(409);
+        // the lookups keep working
+        assertThat(json(get("/order/" + orderId)).get("status").asString()).isEqualTo("FAILED");
+        assertThat(json(get("/" + id)).get("status").asString()).isEqualTo("FAILED");
+        // and nothing else was published: the decline's own payment.failed is the only record for this order
+        drain(Duration.ofSeconds(3));
+        assertThat(received.stream().filter(r -> Long.toString(orderId).equals(r.key())).map(ConsumerRecord::topic))
+                .containsExactly("payment.failed");
     }
 }

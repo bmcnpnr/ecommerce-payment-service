@@ -39,6 +39,10 @@
         <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-netflix-eureka-client</artifactId></dependency>
         <!-- Feign client for order-service (I-1: validate a payment against the order). Version from the spring-cloud BOM. -->
         <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-openfeign</artifactId></dependency>
+        <!-- Circuit breaker for that Feign client (H1): when order-service is down or slow, payments fail fast with 503
+             instead of each request holding a thread for the read timeout. Same starter and version (spring-cloud BOM)
+             as order, catalog and review. -->
+        <dependency><groupId>org.springframework.cloud</groupId><artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId></dependency>
         <dependency><groupId>org.springframework.kafka</groupId><artifactId>spring-kafka</artifactId></dependency>
         <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><version>${lombok.version.provided}</version><scope>provided</scope></dependency>
         <dependency><groupId>org.postgresql</groupId><artifactId>postgresql</artifactId></dependency>

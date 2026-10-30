@@ -1,6 +1,7 @@
 package com.ecommerce.payment.repository;
 
 import com.ecommerce.payment.model.Payment;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -11,7 +12,8 @@ import java.util.Optional;
 @Repository
 public interface PaymentRepository extends JpaRepository<Payment, Long> {
     Optional<Payment> findByOrderId(Long orderId);
-    List<Payment> findByCustomerId(String customerId);
+    /** Always paged: a customer's payment history is unbounded. */
+    List<Payment> findByCustomerId(String customerId, Pageable pageable);
     Optional<Payment> findByTransactionId(String transactionId);
 
     @Query("select p.customerId from Payment p where p.id = :id")

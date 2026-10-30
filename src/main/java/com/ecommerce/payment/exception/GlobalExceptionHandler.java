@@ -1,5 +1,6 @@
 package com.ecommerce.payment.exception;
 
+import com.ecommerce.payment.logging.LogThrottle;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,16 +12,28 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
  * Every client error is a 4xx with a fixed message per error kind: no Java type names, parser text,
  * SQL, internal URLs or downstream bodies reach the response. Details go to the log.
+ *
+ * <p>What reaches the log is bounded (L3, L4): a failure that repeats at request rate writes one line per
+ * kind per 10 s with a count of what was swallowed, never a stack trace per request. A dependency that does
+ * not answer (database, broker) is a 503 and one line without a stack trace; a bug is a 500 and its stack
+ * trace once per failure site per window. The client gets the same body either way, with its correlation id,
+ * and the trace of every request is in Tempo.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    static final String UNAVAILABLE_MESSAGE = "Service temporarily unavailable";
+
+    private static final LogThrottle ERROR_LOG = new LogThrottle(10, TimeUnit.SECONDS);
+    private static final LogThrottle UNAVAILABLE_LOG = new LogThrottle(10, TimeUnit.SECONDS);
 
     @ExceptionHandler(PaymentNotFoundException.class)
     public ResponseEntity<ErrorResponse> notFound(PaymentNotFoundException ex, HttpServletRequest req) {
@@ -66,6 +79,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(InvalidPaymentStateException.class)
     public ResponseEntity<ErrorResponse> invalidState(InvalidPaymentStateException ex, HttpServletRequest req) {
+        return resp(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req.getRequestURI());
+    }
+
+    @ExceptionHandler(BadRequestException.class)
+    public ResponseEntity<ErrorResponse> badRequest(BadRequestException ex, HttpServletRequest req) {
         return resp(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req.getRequestURI());
     }
 
@@ -131,7 +149,21 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> general(Exception ex, HttpServletRequest req) {
-        log.error("Unhandled exception on {} {} (correlationId={})", req.getMethod(), req.getRequestURI(), MDC.get("correlationId"), ex);
+        Throwable dependency = Unavailability.dependencyFailure(ex);
+        if (dependency != null) {
+            long suppressed = UNAVAILABLE_LOG.acquire(dependency.getClass().getName());
+            if (suppressed >= 0) {
+                log.warn("Dependency unavailable on {} {}: {}{}", req.getMethod(), req.getRequestURI(),
+                        Unavailability.describe(dependency), LogThrottle.suppressedSuffix(suppressed));
+            }
+            return resp(HttpStatus.SERVICE_UNAVAILABLE, "Service Unavailable", UNAVAILABLE_MESSAGE, req.getRequestURI());
+        }
+        // The client gets a generic message, so the cause has to be logged here or it is lost entirely.
+        long suppressed = ERROR_LOG.acquire(LogThrottle.keyOf(ex));
+        if (suppressed >= 0) {
+            log.error("Unhandled exception on {} {} (correlationId={}){}", req.getMethod(), req.getRequestURI(),
+                    MDC.get("correlationId"), LogThrottle.suppressedSuffix(suppressed), ex);
+        }
         return resp(HttpStatus.INTERNAL_SERVER_ERROR, "Internal Server Error", "An unexpected error occurred", req.getRequestURI());
     }
 

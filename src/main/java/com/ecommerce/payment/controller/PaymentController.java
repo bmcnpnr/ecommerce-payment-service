@@ -21,6 +21,7 @@ public class PaymentController {
 
     private static final String USER = "X-Username";
     private static final String ROLE = "X-User-Role";
+    static final int MAX_PAGE_SIZE = 100;
 
     private final PaymentService paymentService;
     private final PaymentAccess access;
@@ -59,12 +60,18 @@ public class PaymentController {
     }
 
     @GetMapping("/customer/{customerId}")
-    @Operation(summary = "List the payments of a customer (that customer or admin)")
+    @Operation(summary = "List the payments of a customer, newest first (that customer or admin); at most 100 per page")
     public ResponseEntity<List<PaymentDTO>> getByCustomer(@PathVariable String customerId,
+                                                          @RequestParam(defaultValue = "0") int page,
+                                                          @RequestParam(defaultValue = "" + MAX_PAGE_SIZE) int size,
                                                           @RequestHeader(value = USER, required = false) String username,
                                                           @RequestHeader(value = ROLE, required = false) String role) {
         access.requireCustomerOrAdmin(username, role, customerId);
-        return ResponseEntity.ok(paymentService.getPaymentsByCustomer(customerId));
+        if (page < 0 || size < 1 || size > MAX_PAGE_SIZE) {
+            throw new com.ecommerce.payment.exception.BadRequestException(
+                    "page must be at least 0 and size between 1 and " + MAX_PAGE_SIZE);
+        }
+        return ResponseEntity.ok(paymentService.getPaymentsByCustomer(customerId, page, size));
     }
 
     @PostMapping("/{id}/process")

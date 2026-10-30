@@ -140,10 +140,14 @@ class PaymentServiceSecurityTest {
         Payment payment = payment(status);
 
         assertThatThrownBy(() -> service.initiatePayment(request("bob", "0.01", "CREDIT_CARD")))
-                .isInstanceOf(RuntimeException.class);
+                .isInstanceOf(PaymentAlreadyProcessedException.class)
+                // the same generic answer whatever the state: only the owner is told that the payment was declined
+                .hasMessage("A payment already exists for order: 100");
 
         assertThat(payment.getCustomerId()).isEqualTo("alice");
         assertThat(payment.getAmount()).isEqualByComparingTo("250.00");
+        assertThat(payment.getStatus()).isEqualTo(status);
+        verify(paymentRepository, never()).save(any());
     }
 
     @ParameterizedTest
@@ -155,10 +159,28 @@ class PaymentServiceSecurityTest {
         verify(paymentRepository, never()).save(any());
     }
 
-    @Test
-    void initiate_retryAfterFailure_resetsServerControlledFields() {
+    /** A declined payment ends the order (order-service cancels it on payment.failed): there is no second attempt. */
+    @ParameterizedTest
+    @ValueSource(strings = {"CREDIT_CARD", "DEBIT_CARD", "BANK_TRANSFER"})
+    void initiate_afterADecline_byTheOwner_isRejected_andTheRowIsLeftAlone(String method) {
         Payment payment = payment(PaymentStatus.FAILED);
         payment.setFailureReason("Payment declined by gateway");
+
+        assertThatThrownBy(() -> service.initiatePayment(request("alice", "250.00", method)))
+                .isInstanceOf(PaymentAlreadyProcessedException.class)
+                .hasMessage(PaymentService.DECLINED_ORDER_MESSAGE);
+
+        assertThat(payment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(payment.getFailureReason()).isEqualTo("Payment declined by gateway");
+        assertThat(payment.getMethod()).isEqualTo(PaymentMethod.CREDIT_CARD);
+        verify(paymentRepository, never()).save(any());
+        verifyNoInteractions(eventProducer);
+    }
+
+    @Test
+    void initiate_retryOfAPendingAttempt_resetsServerControlledFields() {
+        Payment payment = payment(PaymentStatus.PENDING);
+        payment.setFailureReason("left over");
         payment.setTransactionId("TXN-STALE");
 
         service.initiatePayment(request("alice", "250.00", "CREDIT_CARD"));

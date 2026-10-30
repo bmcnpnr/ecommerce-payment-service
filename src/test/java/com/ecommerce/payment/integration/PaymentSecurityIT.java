@@ -396,17 +396,46 @@ class PaymentSecurityIT extends AbstractIntegrationTest {
         assertThat(statusOf(paid.getId())).isEqualTo("COMPLETED");
     }
 
+    /**
+     * A declined payment ends the order (order-service cancels it on payment.failed). Until that event has been
+     * consumed the order still reads CONFIRMED, so the order check passes: the payment itself has to refuse.
+     */
     @Test
-    void initiate_retryAfterFailure_bySameCustomer_isAccepted_andResetsTheRow() {
+    void initiate_retryAfterFailure_isRefused_409_theRowStaysFailed_andNothingIsChargedOrPublished() {
         String alice = uniq("alice");
         Payment failed = seed(alice, PaymentStatus.FAILED, "10.00");
+        jdbc.update("update payments set failure_reason = 'Payment declined by gateway' where id = ?", failed.getId());
         registerOrder(failed.getOrderId(), alice, "10.00", "CONFIRMED");
 
         ResponseEntity<String> response = asCustomer(alice, HttpMethod.POST, "/api/v1/payments", initiateJson(failed.getOrderId(), alice, "10.00"));
 
-        assertThat(response.getStatusCode().value()).as(response.getBody()).isEqualTo(201);
-        assertThat(statusOf(failed.getId())).isEqualTo("PENDING");
+        assertThat(response.getStatusCode().value()).as(response.getBody()).isEqualTo(409);
+        assertThat(JSON.readTree(response.getBody()).get("message").asString())
+                .isEqualTo("The payment for this order was declined and the order is cancelled. Place a new order to try again.");
+        assertThat(statusOf(failed.getId())).isEqualTo("FAILED");
         assertThat(rowsForOrder(failed.getOrderId())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select failure_reason from payments where id = ?", String.class, failed.getId()))
+                .isEqualTo("Payment declined by gateway");
+        // the gateway cannot be reached through /process either
+        ResponseEntity<String> process = asCustomer(alice, HttpMethod.POST, "/api/v1/payments/" + failed.getId() + "/process", null);
+        assertThat(process.getStatusCode().value()).isEqualTo(409);
+        assertThat(statusOf(failed.getId())).isEqualTo("FAILED");
+        assertThat(records(ALL_PAYMENT_TOPICS, Long.toString(failed.getOrderId()), Duration.ofSeconds(2))).isEmpty();
+    }
+
+    @Test
+    void initiate_retryAfterFailure_byAnotherCustomer_learnsNothingAboutTheDecline() {
+        String alice = uniq("alice");
+        String bob = uniq("bob");
+        Payment failed = seed(alice, PaymentStatus.FAILED, "10.00");
+        registerOrder(failed.getOrderId(), bob, "10.00", "CONFIRMED"); // even if the order data were bent to fit bob
+
+        ResponseEntity<String> response = asCustomer(bob, HttpMethod.POST, "/api/v1/payments", initiateJson(failed.getOrderId(), bob, "10.00"));
+
+        assertThat(response.getStatusCode().value()).isEqualTo(409);
+        assertThat(response.getBody()).doesNotContain("declined").doesNotContain("FAILED");
+        assertThat(statusOf(failed.getId())).isEqualTo("FAILED");
+        assertThat(jdbc.queryForObject("select customer_id from payments where id = ?", String.class, failed.getId())).isEqualTo(alice);
     }
 
     @Test

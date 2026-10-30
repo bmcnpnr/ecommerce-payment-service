@@ -11,28 +11,25 @@ import au.com.dius.pact.provider.junitsupport.loader.PactFolder;
 import com.ecommerce.payment.model.Payment;
 import com.ecommerce.payment.model.PaymentMethod;
 import com.ecommerce.payment.model.PaymentStatus;
+import com.ecommerce.payment.outbox.OutboxEvent;
+import com.ecommerce.payment.outbox.OutboxEventRepository;
 import com.ecommerce.payment.repository.PaymentRepository;
 import com.ecommerce.payment.service.PaymentService;
-import org.apache.kafka.common.header.internals.RecordHeaders;
-import org.apache.kafka.common.serialization.Serializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.kafka.core.ProducerFactory;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.reset;
@@ -48,11 +45,9 @@ import static org.mockito.Mockito.when;
  * {@code src/test/resources/pacts/}, see {@code ecommerce-platform/sync-pacts.sh}).
  * For every interaction this class produces the record the way production does:
  * the real {@link PaymentService} builds the event, the real
- * {@code PaymentEventProducer} hands it to the {@code KafkaTemplate} (mocked here to
- * capture topic, key and payload), and the payload is serialized with the value
- * serializer configured on the production {@link ProducerFactory} (spring-kafka's
- * {@code JacksonJsonSerializer}, no type headers). Pact then matches bytes and metadata
- * against each consumer's expectations.
+ * {@code PaymentEventProducer} serializes it and writes it to the outbox table (the repository is
+ * mocked here to capture topic, key and payload; {@code OutboxRelay} sends exactly these bytes to Kafka).
+ * Pact then matches bytes and metadata against each consumer's expectations.
  *
  * <p>{@code processPayment} decides success/failure with a random number (80/20), so
  * the completed/failed states simply re-run it on a fresh PENDING payment until the
@@ -69,14 +64,11 @@ class PaymentEventsProviderPactTest {
     @Autowired
     private PaymentService paymentService;
 
-    @Autowired
-    private ProducerFactory<String, Object> producerFactory;
-
     @MockitoBean
     private PaymentRepository paymentRepository;
 
     @MockitoBean
-    private KafkaTemplate<String, Object> kafkaTemplate;
+    private OutboxEventRepository outboxRepository;
 
     @BeforeEach
     void setTarget(PactVerificationContext context) {
@@ -105,7 +97,7 @@ class PaymentEventsProviderPactTest {
     @State("payment 503 for order 7 has been refunded")
     void payment503Completed() {
         reset(paymentRepository);
-        reset(kafkaTemplate);
+        reset(outboxRepository);
         when(paymentRepository.findById(503L)).thenAnswer(inv -> {
             Payment completed = payment(503L, PaymentStatus.COMPLETED);
             completed.setTransactionId("TXN-1A2B3C4D");
@@ -138,43 +130,36 @@ class PaymentEventsProviderPactTest {
 
     private void stubPendingPayment(long paymentId) {
         reset(paymentRepository);
-        reset(kafkaTemplate);
+        reset(outboxRepository);
         when(paymentRepository.findById(paymentId)).thenAnswer(inv -> Optional.of(payment(paymentId, PaymentStatus.PENDING)));
         when(paymentRepository.save(any(Payment.class))).thenAnswer(inv -> inv.getArgument(0));
     }
 
     private MessageAndMetadata processUntilPublishedOn(String topic, long paymentId) {
         for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-            clearInvocations(kafkaTemplate);
+            clearInvocations(outboxRepository);
             paymentService.processPayment(paymentId);
-            ArgumentCaptor<String> sentTopic = ArgumentCaptor.forClass(String.class);
-            verify(kafkaTemplate).send(sentTopic.capture(), anyString(), any());
-            if (topic.equals(sentTopic.getValue())) {
+            ArgumentCaptor<OutboxEvent> queued = ArgumentCaptor.forClass(OutboxEvent.class);
+            verify(outboxRepository).save(queued.capture());
+            if (topic.equals(queued.getValue().getTopic())) {
                 return capturedRecord(topic);
             }
         }
         throw new AssertionError("processPayment never published on " + topic + " in " + MAX_ATTEMPTS + " attempts");
     }
 
-    /** The (topic, key, value) the production code handed to KafkaTemplate, serialized exactly as the producer would. */
+    /** The (topic, key, value) the production code wrote to the outbox: the bytes OutboxRelay will send. */
     private MessageAndMetadata capturedRecord(String expectedTopic) {
-        ArgumentCaptor<String> key = ArgumentCaptor.forClass(String.class);
-        ArgumentCaptor<Object> value = ArgumentCaptor.forClass(Object.class);
-        verify(kafkaTemplate, atLeastOnce()).send(eq(expectedTopic), key.capture(), value.capture());
-        byte[] bytes = valueSerializer().serialize(expectedTopic, new RecordHeaders(), value.getValue());
-        return new MessageAndMetadata(bytes, Map.of(
+        ArgumentCaptor<OutboxEvent> row = ArgumentCaptor.forClass(OutboxEvent.class);
+        verify(outboxRepository, atLeastOnce()).save(row.capture());
+        OutboxEvent last = row.getValue();
+        if (!expectedTopic.equals(last.getTopic())) {
+            throw new AssertionError("expected a record on " + expectedTopic + " but the outbox got " + last.getTopic());
+        }
+        return new MessageAndMetadata(last.getPayload().getBytes(StandardCharsets.UTF_8), Map.of(
                 "contentType", "application/json",
                 "kafka_topic", expectedTopic,
-                "kafka_key", key.getValue()));
-    }
-
-    /** The value serializer instance the production ProducerFactory hands to the Kafka client. */
-    private Serializer<Object> valueSerializer() {
-        Serializer<Object> serializer = producerFactory.getValueSerializer();
-        if (serializer == null) {
-            throw new IllegalStateException("The production ProducerFactory configures no value serializer instance");
-        }
-        return serializer;
+                "kafka_key", last.getEventKey()));
     }
 
     private static Payment payment(long id, PaymentStatus status) {

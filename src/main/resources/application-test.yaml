@@ -16,3 +16,8 @@ eureka:
     enabled: false
     register-with-eureka: false
     fetch-registry: false
+
+# The relay's SELECT ... FOR UPDATE SKIP LOCKED is Postgres SQL; the *IT classes run the real relay.
+outbox:
+  relay:
+    enabled: false

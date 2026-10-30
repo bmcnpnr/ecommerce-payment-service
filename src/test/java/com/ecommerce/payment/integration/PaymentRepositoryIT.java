@@ -52,7 +52,7 @@ class PaymentRepositoryIT extends AbstractIntegrationTest {
         Object version = em.createNativeQuery(
                 "select version from flyway_schema_history where success order by installed_rank desc limit 1")
                 .getSingleResult();
-        assertThat(version).hasToString("3"); // V3 adds payments.version
+        assertThat(version).hasToString("4"); // V3 adds payments.version, V4 the outbox table
         Object db = em.createNativeQuery("select version()").getSingleResult();
         assertThat(db.toString()).startsWith("PostgreSQL 16");
     }
@@ -148,9 +148,9 @@ class PaymentRepositoryIT extends AbstractIntegrationTest {
         repository.save(payment(uniqueOrderId(), "someone-else", "3"));
         em.flush();
 
-        List<Payment> found = repository.findByCustomerId(customer);
+        List<Payment> found = repository.findByCustomerId(customer, org.springframework.data.domain.PageRequest.of(0, 100));
         assertThat(found).hasSize(2).allMatch(p -> p.getCustomerId().equals(customer));
-        assertThat(repository.findByCustomerId("cust-" + UUID.randomUUID())).isEmpty();
+        assertThat(repository.findByCustomerId("cust-" + UUID.randomUUID(), org.springframework.data.domain.PageRequest.of(0, 100))).isEmpty();
     }
 
     @Test

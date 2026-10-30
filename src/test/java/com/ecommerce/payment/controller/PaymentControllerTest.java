@@ -112,10 +112,10 @@ class PaymentControllerTest {
 
     @Test
     void getByCustomer_returnsList() throws Exception {
-        when(paymentService.getPaymentsByCustomer("cust-1")).thenReturn(List.of(
+        when(paymentService.getPaymentsByCustomer("cust-1", 0, 100)).thenReturn(List.of(
                 PaymentDTO.builder().id(1L).customerId("cust-1").build(),
                 PaymentDTO.builder().id(2L).customerId("cust-1").build()));
-        when(paymentService.getPaymentsByCustomer("nobody")).thenReturn(List.of());
+        when(paymentService.getPaymentsByCustomer("nobody", 0, 100)).thenReturn(List.of());
 
         mockMvc.perform(get("/api/v1/payments/customer/cust-1"))
                 .andExpect(status().isOk())

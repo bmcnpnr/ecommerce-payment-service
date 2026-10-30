@@ -1,6 +1,14 @@
 package com.ecommerce.payment.integration;
 
 import com.sun.net.httpserver.HttpServer;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
+import org.apache.kafka.clients.consumer.ConsumerRecord;
+import org.apache.kafka.clients.consumer.KafkaConsumer;
+import org.apache.kafka.common.serialization.StringDeserializer;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -11,8 +19,14 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Shared Testcontainers for every *IT class: one Postgres and one Kafka per JVM (started once in
@@ -35,6 +49,9 @@ public abstract class AbstractIntegrationTest {
     protected static final Map<Long, String> FAKE_ORDERS = new ConcurrentHashMap<>();
     /** When set, the stand-in answers every lookup with this status instead (to simulate an outage). */
     protected static volatile int fakeOrderServiceForcedStatus = 0;
+    /** How long the stand-in takes to answer (to simulate a slow order-service), and how many lookups reached it. */
+    protected static volatile long fakeOrderServiceDelayMs = 0;
+    protected static final AtomicInteger FAKE_ORDER_LOOKUPS = new AtomicInteger();
     protected static final HttpServer FAKE_ORDER_SERVICE;
 
     static {
@@ -45,7 +62,21 @@ public abstract class AbstractIntegrationTest {
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
+        // The default executor runs one handler at a time, which would serialise the slow answers below.
+        FAKE_ORDER_SERVICE.setExecutor(Executors.newCachedThreadPool(r -> {
+            Thread t = new Thread(r, "fake-order-service");
+            t.setDaemon(true);
+            return t;
+        }));
         FAKE_ORDER_SERVICE.createContext("/internal/v1/orders/", exchange -> {
+            FAKE_ORDER_LOOKUPS.incrementAndGet();
+            if (fakeOrderServiceDelayMs > 0) {
+                try {
+                    Thread.sleep(fakeOrderServiceDelayMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
             String id = exchange.getRequestURI().getPath().substring("/internal/v1/orders/".length());
             String json = id.matches("\\d+") ? FAKE_ORDERS.get(Long.parseLong(id)) : null;
             int status = fakeOrderServiceForcedStatus != 0 ? fakeOrderServiceForcedStatus : (json == null ? 404 : 200);
@@ -57,6 +88,41 @@ public abstract class AbstractIntegrationTest {
         });
         FAKE_ORDER_SERVICE.start();
         Runtime.getRuntime().addShutdownHook(new Thread(() -> FAKE_ORDER_SERVICE.stop(0)));
+    }
+
+    /**
+     * The tests share one Spring context, and some of them make order-service fail on purpose. A circuit breaker
+     * that one test left open (or half-full of failures) would refuse the next test's payments.
+     */
+    @Autowired(required = false)
+    private CircuitBreakerRegistry circuitBreakers;
+
+    @BeforeEach
+    void closeCircuitBreakers() {
+        if (circuitBreakers != null) {
+            circuitBreakers.getAllCircuitBreakers().forEach(CircuitBreaker::reset);
+        }
+    }
+
+    /** Reads {@code topic} from the beginning (fresh group) until a record with {@code key} arrives. */
+    protected static ConsumerRecord<String, String> awaitRecord(String topic, String key, Duration timeout) {
+        Map<String, Object> config = Map.of(
+                ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, KAFKA.getBootstrapServers(),
+                ConsumerConfig.GROUP_ID_CONFIG, "it-" + UUID.randomUUID(),
+                ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        try (KafkaConsumer<String, String> consumer =
+                     new KafkaConsumer<>(config, new StringDeserializer(), new StringDeserializer())) {
+            consumer.subscribe(List.of(topic));
+            Instant deadline = Instant.now().plus(timeout);
+            while (Instant.now().isBefore(deadline)) {
+                for (ConsumerRecord<String, String> record : consumer.poll(Duration.ofMillis(500))) {
+                    if (key.equals(record.key())) {
+                        return record;
+                    }
+                }
+            }
+        }
+        throw new AssertionError("No record with key " + key + " on " + topic + " within " + timeout);
     }
 
     /** Registers an order as order-service's internal endpoint would return it. */

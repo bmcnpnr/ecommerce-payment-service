@@ -15,6 +15,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
@@ -130,20 +133,43 @@ class PaymentServiceTest {
     }
 
     @Test
-    void initiatePayment_existingPendingOrFailedPayment_allowsNewAttempt() {
-        // PROCESSING (mid-flight) and REFUNDED (S-76) are not retryable: see initiatePayment_processingOrRefunded_isRejected
-        for (PaymentStatus existing : new PaymentStatus[]{PaymentStatus.PENDING, PaymentStatus.FAILED}) {
-            reset(paymentRepository);
-            testPayment.setStatus(existing);
-            when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(testPayment));
-            when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    void initiatePayment_existingPendingPayment_allowsNewAttempt() {
+        // A /process call that never happened or timed out leaves the row PENDING: the attempt reuses it.
+        // PROCESSING (mid-flight), REFUNDED (S-76) and FAILED (a declined payment ends the order) are not retryable:
+        // see initiatePayment_processingOrRefunded_isRejected and initiatePayment_afterADecline_isRejected_...
+        testPayment.setStatus(PaymentStatus.PENDING);
+        when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(testPayment));
+        when(paymentRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            PaymentDTO result = paymentService.initiatePayment(InitiatePaymentRequest.builder()
-                    .orderId(10L).customerId("user1").amount(BigDecimal.ONE).method("BANK_TRANSFER").build());
+        PaymentDTO result = paymentService.initiatePayment(InitiatePaymentRequest.builder()
+                .orderId(10L).customerId("user1").amount(BigDecimal.ONE).method("BANK_TRANSFER").build());
 
-            assertThat(result.getStatus()).as("existing %s", existing).isEqualTo("PENDING");
-            verify(paymentRepository).save(any());
-        }
+        assertThat(result.getStatus()).isEqualTo("PENDING");
+        assertThat(result.getId()).as("the same row, not a second one").isEqualTo(1L);
+        verify(paymentRepository).save(testPayment);
+    }
+
+    /**
+     * order-service cancels the order (and returns its stock) when it consumes payment.failed, which can be a second
+     * or an outage away. A retry in that window passes the order check, so the payment itself has to refuse it.
+     */
+    @Test
+    void initiatePayment_afterADecline_isRejected_withTheFixedMessage_chargesNothing_andPublishesNothing() {
+        testPayment.setStatus(PaymentStatus.FAILED);
+        testPayment.setFailureReason("Payment declined by gateway");
+        when(paymentRepository.findByOrderId(10L)).thenReturn(Optional.of(testPayment));
+
+        assertThatThrownBy(() -> paymentService.initiatePayment(InitiatePaymentRequest.builder()
+                .orderId(10L).customerId("user1").amount(new BigDecimal("99.99")).method("CREDIT_CARD").build()))
+                .isInstanceOf(PaymentAlreadyProcessedException.class)
+                .hasMessage("The payment for this order was declined and the order is cancelled. Place a new order to try again.")
+                .hasMessage(PaymentService.DECLINED_ORDER_MESSAGE);
+
+        assertThat(testPayment.getStatus()).isEqualTo(PaymentStatus.FAILED);
+        assertThat(testPayment.getFailureReason()).isEqualTo("Payment declined by gateway");
+        verify(paymentRepository, never()).save(any());
+        verify(paymentRepository, never()).flush();
+        verifyNoInteractions(eventProducer);
     }
 
     @Test
@@ -246,7 +272,7 @@ class PaymentServiceTest {
     void processPayment_success_completesAndPublishesCompletedEvent() {
         PaymentDTO dto = processUntil("COMPLETED");
 
-        assertThat(dto.getTransactionId()).matches("TXN-[0-9A-F]{8}");
+        assertThat(dto.getTransactionId()).matches("TXN-[0-9A-F]{16}");
         assertThat(dto.getFailureReason()).isNull();
         assertThat(dto.getUpdatedAt()).isNotNull();
 
@@ -379,12 +405,39 @@ class PaymentServiceTest {
     void getPaymentsByCustomer_mapsEveryPayment() {
         Payment second = Payment.builder().id(2L).orderId(20L).customerId("user1")
                 .amount(BigDecimal.ONE).method(PaymentMethod.DIGITAL_WALLET).build();
-        when(paymentRepository.findByCustomerId("user1")).thenReturn(List.of(testPayment, second));
-        when(paymentRepository.findByCustomerId("nobody")).thenReturn(List.of());
+        when(paymentRepository.findByCustomerId(eq("user1"), any(Pageable.class))).thenReturn(List.of(testPayment, second));
+        when(paymentRepository.findByCustomerId(eq("nobody"), any(Pageable.class))).thenReturn(List.of());
 
-        assertThat(paymentService.getPaymentsByCustomer("user1"))
+        assertThat(paymentService.getPaymentsByCustomer("user1", 0, 100))
                 .extracting(PaymentDTO::getId, PaymentDTO::getMethod)
                 .containsExactly(tuple(1L, "CREDIT_CARD"), tuple(2L, "DIGITAL_WALLET"));
-        assertThat(paymentService.getPaymentsByCustomer("nobody")).isEmpty();
+        assertThat(paymentService.getPaymentsByCustomer("nobody", 0, 100)).isEmpty();
+    }
+
+    @Test
+    void getPaymentsByCustomer_asksForTheNewestPageAndNeverMoreThan100() {
+        when(paymentRepository.findByCustomerId(eq("user1"), any(Pageable.class))).thenReturn(List.of());
+
+        paymentService.getPaymentsByCustomer("user1", 3, 100000);
+        paymentService.getPaymentsByCustomer("user1", -5, 0);
+
+        ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
+        verify(paymentRepository, times(2)).findByCustomerId(eq("user1"), captor.capture());
+        assertThat(captor.getAllValues().get(0).getPageNumber()).isEqualTo(3);
+        assertThat(captor.getAllValues().get(0).getPageSize()).isEqualTo(100);
+        assertThat(captor.getAllValues().get(0).getSort().getOrderFor("id").getDirection()).isEqualTo(Sort.Direction.DESC);
+        assertThat(captor.getAllValues().get(1).getPageNumber()).isZero();
+        assertThat(captor.getAllValues().get(1).getPageSize()).isEqualTo(1);
+    }
+
+    /** 8 hex digits (32 bits) collided after a few tens of thousands of payments and failed the commit of an approved one. */
+    @Test
+    void transactionIds_have64RandomBits_andDoNotRepeat() {
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < 20_000; i++) {
+            String id = PaymentService.newTransactionId();
+            assertThat(id).matches("TXN-[0-9A-F]{16}");
+            assertThat(seen.add(id)).as("duplicate transaction id after %d", i).isTrue();
+        }
     }
 }

@@ -10,12 +10,15 @@ import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.stream.Collectors;
@@ -24,6 +27,15 @@ import java.util.stream.Collectors;
 public class PaymentService {
 
     private static final Logger log = LoggerFactory.getLogger(PaymentService.class);
+
+    static final int MAX_PAGE_SIZE = 100;
+
+    /**
+     * Answered (409) to anyone who tries to pay for an order whose payment was declined. Fixed text: the web
+     * frontend shows the same sentence when it sees the decline itself, so the two never disagree.
+     */
+    public static final String DECLINED_ORDER_MESSAGE =
+            "The payment for this order was declined and the order is cancelled. Place a new order to try again.";
 
     private final PaymentRepository paymentRepository;
     private final PaymentEventProducer eventProducer;
@@ -38,17 +50,28 @@ public class PaymentService {
         }
 
         // payments.order_id is unique: a new attempt for an unpaid order reuses the existing row, but only
-        // for the customer who owns it and only while it is still PENDING or FAILED.
+        // for the customer who owns it and only while it is still PENDING (a /process call that never happened
+        // or timed out). A declined payment (FAILED) is final for the order.
         Payment payment = paymentRepository.findByOrderId(request.getOrderId()).orElse(null);
         if (payment != null) {
             if (payment.getStatus() == PaymentStatus.COMPLETED) {
                 throw new PaymentAlreadyProcessedException("Payment already completed for order: " + request.getOrderId());
             }
             if (!payment.getCustomerId().equals(request.getCustomerId())) {
-                // Never let a second caller rewrite someone else's payment (S-75).
+                // Never let a second caller rewrite someone else's payment (S-75). Before the FAILED check below, so
+                // that nobody but the owner learns that the payment was declined.
                 throw new PaymentAlreadyProcessedException("A payment already exists for order: " + request.getOrderId());
             }
-            if (payment.getStatus() != PaymentStatus.PENDING && payment.getStatus() != PaymentStatus.FAILED) {
+            if (payment.getStatus() == PaymentStatus.FAILED) {
+                // A decline ends the order: order-service cancels it, and gives its stock back, when it consumes
+                // payment.failed. Until that event has been consumed (a second normally, unbounded while Kafka is
+                // slow or down) the order still reads CONFIRMED, so a retry would pass the order check and be
+                // charged; the earlier event would then cancel the order and the later payment.completed would
+                // find it cancelled, with the money taken and the stock possibly sold. The two events travel on
+                // different topics, so nothing orders them: the only safe rule is that FAILED is terminal.
+                throw new PaymentAlreadyProcessedException(DECLINED_ORDER_MESSAGE);
+            }
+            if (payment.getStatus() != PaymentStatus.PENDING) {
                 // REFUNDED must stay refunded (S-76); PROCESSING is mid-flight.
                 throw new PaymentAlreadyProcessedException("Payment for order " + request.getOrderId()
                         + " is in status " + payment.getStatus() + " and cannot be initiated again");
@@ -95,7 +118,7 @@ public class PaymentService {
 
         if (success) {
             payment.setStatus(PaymentStatus.COMPLETED);
-            payment.setTransactionId("TXN-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
+            payment.setTransactionId(newTransactionId());
             payment.setUpdatedAt(LocalDateTime.now());
             paymentRepository.save(payment);
 
@@ -133,9 +156,12 @@ public class PaymentService {
                 .orElseThrow(() -> new PaymentNotFoundException("Payment not found for order: " + orderId)));
     }
 
+    /** One page of the customer's payments, newest first; {@code size} is capped at {@value #MAX_PAGE_SIZE}. */
     @Transactional(readOnly = true)
-    public List<PaymentDTO> getPaymentsByCustomer(String customerId) {
-        return paymentRepository.findByCustomerId(customerId).stream().map(this::toDTO).collect(Collectors.toList());
+    public List<PaymentDTO> getPaymentsByCustomer(String customerId, int page, int size) {
+        PageRequest pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), MAX_PAGE_SIZE),
+                Sort.by(Sort.Direction.DESC, "id"));
+        return paymentRepository.findByCustomerId(customerId, pageable).stream().map(this::toDTO).collect(Collectors.toList());
     }
 
     @Transactional
@@ -158,6 +184,14 @@ public class PaymentService {
                 .refundedAt(LocalDateTime.now()).build());
 
         return toDTO(payment);
+    }
+
+    /**
+     * 64 random bits. The column is unique and a collision would fail the commit of a payment that was just
+     * approved; with the 32 bits used before, that starts to happen after a few tens of thousands of payments.
+     */
+    static String newTransactionId() {
+        return "TXN-" + UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase(Locale.ROOT);
     }
 
     /**
